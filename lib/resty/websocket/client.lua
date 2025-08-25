@@ -357,14 +357,11 @@ function _M.connect(self, uri, opts)
         return nil, "bad HTTP response status line: " .. header
     end
 
-    -- RFC 6455 section 4.1: a status code other than 101 means the server
-    -- has not accepted the upgrade, so the client must fail the connection
-    if m[1] ~= "101" then
-        return nil, "failed websocket handshake: unexpected response status: "
-                    .. m[1], header
-    end
-
+    self.resp_status_code = m[1]
     self.resp_header = header
+    if self.resp_status_code ~= "101" then
+        return nil, "unexpected HTTP response code: " .. m[1], header
+    end
 
     return 1, nil, header
 end
@@ -546,5 +543,8 @@ function _M.get_resp_headers(self)
     return resp_headers
 end
 
+function _M.get_resp_status_code(self)
+    return self.resp_status_code
+end
 
 return _M
