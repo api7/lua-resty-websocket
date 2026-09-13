@@ -6,7 +6,7 @@ dev:
 ### test:         Run the test suite
 .PHONY: test
 test:
-	prove -I. -r t/
+	PATH="$(PWD)/work/nginx/sbin:$$PATH" prove -I. -r t/
 
 ### help:         Show Makefile rules
 .PHONY: help

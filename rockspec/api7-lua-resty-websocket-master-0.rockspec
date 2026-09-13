@@ -1,7 +1,7 @@
 package = "api7-lua-resty-websocket"
 version = "master-0"
 source = {
-   url = "git://github.com/api7/lua-resty-websocket",
+   url = "git+https://github.com/api7/lua-resty-websocket",
    branch = "master",
 }
 
