@@ -1,0 +1,55 @@
+name: Release
+
+on:
+  push:
+    branches:
+      - master
+    paths:
+      - 'rockspec/**'
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    name: Release
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Install Lua
+        uses: leafo/gh-actions-lua@v8
+
+      - name: Install Luarocks
+        uses: leafo/gh-actions-luarocks@v4
+
+      - name: Extract release version
+        id: release_env
+        shell: bash
+        run: |
+          title="${{ github.event.head_commit.message }}"
+          re="^feat: release v?(\S+)"
+          if [[ "$title" =~ $re ]]; then
+              echo "version=v${BASH_REMATCH[1]}" >> "$GITHUB_OUTPUT"
+              echo "version_without_v=${BASH_REMATCH[1]}" >> "$GITHUB_OUTPUT"
+          else
+              echo "head commit message does not match 'feat: release vX.Y.Z'" >&2
+              exit 1
+          fi
+
+      - name: Create GitHub release
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          gh release create "${{ steps.release_env.outputs.version }}" \
+            --title "${{ steps.release_env.outputs.version }}" \
+            --notes "Release ${{ steps.release_env.outputs.version }}"
+
+      - name: Upload to LuaRocks
+        env:
+          LUAROCKS_TOKEN: ${{ secrets.LUAROCKS_TOKEN }}
+        run: |
+          luarocks install dkjson
+          luarocks upload "rockspec/api7-lua-resty-websocket-${{ steps.release_env.outputs.version_without_v }}-0.rockspec" --api-key="$LUAROCKS_TOKEN"

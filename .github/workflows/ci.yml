@@ -28,7 +28,12 @@ jobs:
             ca-certificates \
             cpanminus \
             git \
+            lua5.1 \
+            luarocks \
             wget
+
+      - name: Validate rockspec
+        run: luarocks make rockspec/api7-lua-resty-websocket-local-0.rockspec --local --tree /tmp/rockspec-check
 
       - name: Build and test
         env:

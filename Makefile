@@ -1,18 +1,16 @@
-OPENRESTY_PREFIX=/usr/local/openresty
+### dev:          Install runtime dependencies locally
+.PHONY: dev
+dev:
+	luarocks install rockspec/api7-lua-resty-websocket-master-0.rockspec --only-deps --local
 
-PREFIX ?=          /usr/local
-LUA_INCLUDE_DIR ?= $(PREFIX)/include
-LUA_LIB_DIR ?=     $(PREFIX)/lib/lua/$(LUA_VERSION)
-INSTALL ?= install
+### test:         Run the test suite
+.PHONY: test
+test:
+	prove -I. -r t/
 
-.PHONY: all test install
-
-all: ;
-
-install: all
-	$(INSTALL) -d $(DESTDIR)/$(LUA_LIB_DIR)/resty/websocket
-	$(INSTALL) lib/resty/websocket/*.lua $(DESTDIR)/$(LUA_LIB_DIR)/resty/websocket/
-
-test: all
-	PATH=$(OPENRESTY_PREFIX)/nginx/sbin:$$PATH prove -I../test-nginx/lib -r t
-
+### help:         Show Makefile rules
+.PHONY: help
+help:
+	@echo Makefile rules:
+	@echo
+	@grep -E '^### [-A-Za-z0-9_]+:' Makefile | sed 's/###/   /'
