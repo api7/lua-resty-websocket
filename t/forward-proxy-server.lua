@@ -48,7 +48,9 @@ function _M.connect(opts)
     local line = req_sock:receive("*l")
     local name, value = line:match("^([^:]+):%s*(.+)$")
     if name and value then
-      ngx.log(ngx.DEBUG, "header: ", name, " => ", value)
+      -- don't log header values: this includes Proxy-Authorization, which
+      -- carries the client's credentials
+      ngx.log(ngx.DEBUG, "header: ", name)
       headers[name] = value
     end
   until ngx.re.find(line, "^\\s*$", "jo")

@@ -83,6 +83,13 @@ end
 
 
 function _M.connect(self, uri, opts)
+    -- a client instance may be reused across multiple connect() attempts
+    -- (e.g. a failed connect followed by a retry); clear any response
+    -- metadata from a previous attempt so callers never observe stale data.
+    self.resp_status_code = nil
+    self.resp_header = nil
+    self.resp_headers = nil
+
     local sock = self.sock
     if not sock then
         return nil, "not initialized"
@@ -196,6 +203,7 @@ function _M.connect(self, uri, opts)
     end
 
     local connect_addr, connect_port = addr, port
+    local connect_is_unix = is_unix
     local proxy_opts = opts and opts.proxy_opts
     local proxy_url
 
@@ -207,6 +215,7 @@ function _M.connect(self, uri, opts)
         if str_sub(proxy_url, 1, 6) == "unix:/" then
             connect_addr = proxy_url
             connect_port = nil
+            connect_is_unix = true
 
         else
             -- https://github.com/ledgetech/lua-resty-http/blob/master/lib/resty/http.lua
@@ -218,12 +227,22 @@ function _M.connect(self, uri, opts)
             if err then
                 return nil, "error parsing proxy_url: " .. err
 
-            elseif m[1] ~= "http" and m[1] ~= "https" then
-                return nil, "only proxy with scheme \"http\" or \"https\" is supported"
+            elseif not m then
+                return nil, "invalid proxy url"
+
+            elseif m[1] == "https" then
+                -- TLS to the proxy itself (as opposed to the tunnelled TLS
+                -- handshake with the target once CONNECT succeeds) is not
+                -- implemented; fail loudly instead of silently sending the
+                -- CONNECT request (and any Proxy-Authorization) in the clear.
+                return nil, "https proxy (TLS to the proxy itself) is not implemented"
+
+            elseif m[1] ~= "http" then
+                return nil, "only proxy with scheme \"http\" is supported"
             end
 
             connect_addr = m[2]
-            connect_port = m[3] or 443
+            connect_port = m[3] or 80
         end
 
         if not connect_addr then
@@ -232,7 +251,7 @@ function _M.connect(self, uri, opts)
     end
 
     local ok, err
-    if is_unix then
+    if connect_is_unix then
         ok, err = sock:connect(connect_addr, sock_opts)
     else
         ok, err = sock:connect(connect_addr, connect_port, sock_opts)
