@@ -53,7 +53,7 @@ __DATA__
 hello world!
 --- grep_error_log eval: qr/\[(info|warn)\].*/
 --- grep_error_log_out eval
-qr/\A\[warn\] .*? connection with upstream at "ws:.*?" already established.*
+qr/\A\[warn\] .*? connection with upstream already established.*
 \[info\] .*? frame type: text, payload: "hello world!"/
 --- no_error_log
 [error]
