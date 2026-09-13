@@ -46,7 +46,8 @@ qq{
         }
     }
 }
---- config
+--- config eval
+qq{
     location /proxy {
         content_by_lua_block {
             local proxy = require "resty.websocket.proxy"
@@ -57,7 +58,11 @@ qq{
                 return ngx.exit(444)
             end
 
-            local ok, err = wp:connect("wss://127.0.0.1:9001/upstream")
+            -- proxy.lua now defaults to ssl_verify = true; the test upstream
+            -- uses a self-signed cert with no trusted CA configured, so
+            -- verification must be explicitly disabled here
+            local ok, err = wp:connect("wss://127.0.0.1:$ENV{TEST_NGINX_PORT2}/upstream",
+                                        {ssl_verify = false})
             if not ok then
                 ngx.log(ngx.ERR, err)
                 return ngx.exit(444)
@@ -83,6 +88,7 @@ qq{
             ngx.say(data)
         }
     }
+}
 --- response_body
 hello world!
 --- grep_error_log eval: qr/\[lua\].*/

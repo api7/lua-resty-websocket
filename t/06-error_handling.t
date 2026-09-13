@@ -44,7 +44,8 @@ qq{
         }
     }
 }
---- config
+--- config eval
+qq{
     location /proxy {
         content_by_lua_block {
             local proxy = require "resty.websocket.proxy"
@@ -55,7 +56,7 @@ qq{
                 return ngx.exit(444)
             end
 
-            local ok, err = wp:connect("wss://127.0.0.1:9001/upstream")
+            local ok, err = wp:connect("wss://127.0.0.1:$ENV{TEST_NGINX_PORT2}/upstream")
             if not ok then
                 ngx.log(ngx.ERR, err)
                 return ngx.exit(444)
@@ -78,6 +79,7 @@ qq{
             wb:connect(uri)
         }
     }
+}
 --- ignore_response_body
 --- error_log
 SSL_do_handshake() failed

@@ -355,12 +355,22 @@ local function forwarder(self, ctx)
                 -- callback
 
                 if on_frame then
-                    local updated, updated_code = on_frame(self, role, typ,
-                                                           data, fin, code)
+                    local call_ok, updated, updated_code = pcall(on_frame,
+                        self, role, typ, data, fin, code)
+                    if not call_ok then
+                        log(ngx.ERR, fmt("opts.on_frame callback errored: %s",
+                                         updated))
+                        self[self_state] = _STATES.CLOSING
+                        return role, updated
+                    end
+
                     if updated ~= nil then
                         if type(updated) ~= "string" then
-                            error("opts.on_frame return value must be " ..
-                                  "nil or a string")
+                            log(ngx.ERR, "opts.on_frame return value must " ..
+                                         "be nil or a string")
+                            self[self_state] = _STATES.CLOSING
+                            return role, "opts.on_frame return value must " ..
+                                         "be nil or a string"
                         end
                     end
 
@@ -368,8 +378,11 @@ local function forwarder(self, ctx)
 
                     if typ == "close" and updated_code ~= nil then
                         if type(updated_code) ~= "number" then
-                            error("opts.on_frame status code return value " ..
-                                  "must be nil or a number")
+                            log(ngx.ERR, "opts.on_frame status code return " ..
+                                         "value must be nil or a number")
+                            self[self_state] = _STATES.CLOSING
+                            return role, "opts.on_frame status code return " ..
+                                         "value must be nil or a number"
                         end
 
                         code = updated_code
@@ -383,8 +396,8 @@ local function forwarder(self, ctx)
 
                 else
                     if typ == "close" then
-                        log(ngx.INFO, "forwarding close with code: ", code, ", payload: ",
-                                      data)
+                        log(ngx.INFO, "forwarding close with code: ", code,
+                                      ", payload length: ", data and #data or 0)
 
                         bytes, err = peer_ws:send_close(code, data)
 
@@ -402,7 +415,9 @@ local function forwarder(self, ctx)
 
                 if data_frame then
                     frame_size = 0
-                    frame_count = 0
+                    if fin then
+                        frame_count = 0
+                    end
                 end
             end
 
@@ -418,14 +433,27 @@ end
 
 function _M:connect_upstream(uri, opts)
     if self.upstream_state == _STATES.ESTABLISHED then
-        log(ngx.WARN, fmt("connection with upstream at %q already established",
-                          self.upstream_uri))
+        -- don't log the URI: it may carry sensitive data in its query string
+        log(ngx.WARN, "connection with upstream already established")
         return true
     end
 
     self:dd("connecting to \"", uri, "\" upstream")
 
-    local ok, err, res = self.client:connect(uri, opts)
+    -- default to verifying the upstream's TLS certificate unless the caller
+    -- explicitly asked not to; copy opts so the caller's table isn't mutated
+    local connect_opts = new_tab(0, 8)
+    if opts then
+        for k, v in pairs(opts) do
+            connect_opts[k] = v
+        end
+    end
+
+    if connect_opts.ssl_verify == nil then
+        connect_opts.ssl_verify = true
+    end
+
+    local ok, err, res = self.client:connect(uri, connect_opts)
     if not ok then
         return nil, err
     end
@@ -501,7 +529,11 @@ function _M:execute()
 
     local ok, res, err = ngx.thread.wait(self.co_client, self.co_server)
     if not ok then
+        -- res carries the error message here, not err
+        err = res
         log(ngx.ERR, "failed to wait for websocket proxy threads: ", err)
+        ngx.thread.kill(self.co_client)
+        ngx.thread.kill(self.co_server)
 
     elseif res == "client" then
         --assert(self.client_state == _STATES.CLOSING)
