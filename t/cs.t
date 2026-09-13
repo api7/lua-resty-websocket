@@ -2695,3 +2695,456 @@ received text frame: reused connection
 --- no_error_log
 [error]
 [warn]
+
+
+
+=== TEST 41: SSL with forward proxy
+--- no_check_leak
+--- http_config eval: $::HttpConfig
+--- main_config
+    stream {
+        server {
+            listen 16796;
+
+            error_log logs/error.log debug;
+            content_by_lua_block {
+                require("t.forward-proxy-server").connect()
+            }
+        }
+    }
+--- config
+    listen 12345 ssl;
+    server_name test.com;
+    ssl_certificate ../../cert/test.crt;
+    ssl_certificate_key ../../cert/test.key;
+    server_tokens off;
+
+    location = /c {
+        content_by_lua '
+            local client = require "resty.websocket.client"
+            local wb, err = client:new()
+
+            local uri = "wss://127.0.0.1:12345/s"
+            local ok, err = wb:connect(uri, {
+                proxy_opts = {
+                    wss_proxy = "http://127.0.0.1:16796",
+                },
+            })
+            if not ok then
+                ngx.say("failed to connect: " .. err)
+                return
+            end
+
+            local data = "hello"
+            local bytes, err = wb:send_text(data)
+            if not bytes then
+                ngx.say("failed to send frame: ", err)
+                return
+            end
+
+            local typ
+            data, typ, err = wb:recv_frame()
+            if not data then
+                ngx.say("failed to receive 2nd frame: ", err)
+                return
+            end
+
+            ngx.say("received: ", data, " (", typ, ")")
+
+            -- note our mock forward proxy server does not support
+            -- keepalive, so we must close it here
+            local ok, err = wb:close()
+            if not ok then
+                ngx.say("failed to close conn: ", err)
+                return
+            end
+        ';
+    }
+
+    location = /s {
+        content_by_lua '
+            local server = require "resty.websocket.server"
+            local wb, err = server:new()
+            if not wb then
+                ngx.log(ngx.ERR, "failed to new websocket: ", err)
+                return ngx.exit(444)
+            end
+
+            while true do
+                local data, typ, err = wb:recv_frame()
+                if not data then
+                    -- ngx.log(ngx.ERR, "failed to receive a frame: ", err)
+                    return ngx.exit(444)
+                end
+
+                -- send it back!
+                local bytes, err = wb:send_text(data)
+                if not bytes then
+                    ngx.log(ngx.ERR, "failed to send the 2nd text: ", err)
+                    return ngx.exit(444)
+                end
+            end
+        ';
+    }
+--- request
+GET /c
+--- response_body
+received: hello (text)
+
+--- no_error_log
+[error]
+[warn]
+
+
+
+=== TEST 42: SSL with forward proxy with auth
+--- no_check_leak
+--- http_config eval: $::HttpConfig
+--- main_config
+    stream {
+        server {
+            listen 16796;
+
+            error_log logs/error.log debug;
+            content_by_lua_block {
+                require("t.forward-proxy-server").connect({
+                    basic_auth = ngx.encode_base64("user:pass"),
+                })
+            }
+        }
+    }
+--- config
+    listen 12345 ssl;
+    server_name test.com;
+    ssl_certificate ../../cert/test.crt;
+    ssl_certificate_key ../../cert/test.key;
+    server_tokens off;
+
+    location = /c {
+        content_by_lua '
+            local client = require "resty.websocket.client"
+            local wb, err = client:new()
+
+            local uri = "wss://127.0.0.1:12345/s"
+            local ok, err = wb:connect(uri, {
+                proxy_opts = {
+                    wss_proxy = "http://127.0.0.1:16796",
+                },
+            })
+            if ok then
+                ngx.say("connect ok")
+                return
+            end
+            ngx.say("failed to connect without auth: " .. err)
+
+            local uri = "wss://127.0.0.1:12345/s"
+            local ok, err = wb:connect(uri, {
+                proxy_opts = {
+                    wss_proxy = "http://127.0.0.1:16796",
+                    wss_proxy_authorization = "Basic " .. ngx.encode_base64("user:pass")
+                },
+            })
+            if not ok then
+                ngx.say("failed to connect: " .. err)
+                return
+            end
+
+            local data = "hello"
+            local bytes, err = wb:send_text(data)
+            if not bytes then
+                ngx.say("failed to send frame: ", err)
+                return
+            end
+
+            local typ
+            data, typ, err = wb:recv_frame()
+            if not data then
+                ngx.say("failed to receive 2nd frame: ", err)
+                return
+            end
+
+            ngx.say("received: ", data, " (", typ, ")")
+
+            -- note our mock forward proxy server does not support
+            -- keepalive, so we must close it here
+            local ok, err = wb:close()
+            if not ok then
+                ngx.say("failed to close conn: ", err)
+                return
+            end
+        ';
+    }
+
+    location = /s {
+        content_by_lua '
+            local server = require "resty.websocket.server"
+            local wb, err = server:new()
+            if not wb then
+                ngx.log(ngx.ERR, "failed to new websocket: ", err)
+                return ngx.exit(444)
+            end
+
+            while true do
+                local data, typ, err = wb:recv_frame()
+                if not data then
+                    -- ngx.log(ngx.ERR, "failed to receive a frame: ", err)
+                    return ngx.exit(444)
+                end
+
+                -- send it back!
+                local bytes, err = wb:send_text(data)
+                if not bytes then
+                    ngx.log(ngx.ERR, "failed to send the 2nd text: ", err)
+                    return ngx.exit(444)
+                end
+            end
+        ';
+    }
+--- request
+GET /c
+--- response_body
+failed to connect without auth: error establishing a connection to the proxy server, got status 401
+received: hello (text)
+
+--- no_error_log
+[error]
+[warn]
+
+
+=== TEST 43: client:get_resp_headers
+--- http_config eval: $::HttpConfig
+--- config
+    location = /c {
+        content_by_lua '
+            local client = require "resty.websocket.client"
+            local wb, err = client:new()
+            local uri = "ws://127.0.0.1:" .. ngx.var.server_port .. "/s"
+            -- ngx.say("uri: ", uri)
+            local ok, err = wb:connect(uri)
+            if not ok then
+                ngx.say("failed to connect: " .. err)
+                return
+            end
+
+            local data, typ, err = wb:recv_frame()
+            if not data then
+                ngx.say("failed to receive 1st frame: ", err)
+                return
+            end
+
+            ngx.say("1: received: ", data, " (", typ, ")")
+
+            local resp_headers = wb:get_resp_headers()
+
+            ngx.say(resp_headers.upgrade)
+            ngx.say(resp_headers.connection)
+            ngx.say(resp_headers.x_foo)
+        ';
+    }
+
+    location = /s {
+        content_by_lua '
+            local server = require "resty.websocket.server"
+
+            ngx.header["x-foo"] = "bar"
+
+            local wb, err = server:new()
+            if not wb then
+                ngx.log(ngx.ERR, "failed to new websocket: ", err)
+                return ngx.exit(444)
+            end
+
+            local bytes, err = wb:send_text("你好, WebSocket!")
+            if not bytes then
+                ngx.log(ngx.ERR, "failed to send the 1st text: ", err)
+                return ngx.exit(444)
+            end
+        ';
+    }
+--- request
+GET /c
+--- response_body
+1: received: 你好, WebSocket! (text)
+websocket
+upgrade
+bar
+--- no_error_log
+[error]
+[warn]
+
+
+
+=== TEST 44: SSL with forward proxy and legacy HTTP version
+--- no_check_leak
+--- http_config eval: $::HttpConfig
+--- main_config
+    stream {
+        server {
+            listen 16796;
+
+            error_log logs/error.log debug;
+            content_by_lua_block {
+                require("t.forward-proxy-server").connect({
+                    legacy_http_version = true
+                })
+            }
+        }
+    }
+--- config
+    listen 12345 ssl;
+    server_name test.com;
+    ssl_certificate ../../cert/test.crt;
+    ssl_certificate_key ../../cert/test.key;
+    server_tokens off;
+
+    location = /c {
+        content_by_lua '
+            local client = require "resty.websocket.client"
+            local wb, err = client:new()
+
+            local uri = "wss://127.0.0.1:12345/s"
+            local ok, err = wb:connect(uri, {
+                proxy_opts = {
+                    wss_proxy = "http://127.0.0.1:16796",
+                },
+            })
+            if not ok then
+                ngx.say("failed to connect: " .. err)
+                return
+            end
+
+            local data = "hello"
+            local bytes, err = wb:send_text(data)
+            if not bytes then
+                ngx.say("failed to send frame: ", err)
+                return
+            end
+
+            local typ
+            data, typ, err = wb:recv_frame()
+            if not data then
+                ngx.say("failed to receive 2nd frame: ", err)
+                return
+            end
+
+            ngx.say("received: ", data, " (", typ, ")")
+
+            -- note our mock forward proxy server does not support
+            -- keepalive, so we must close it here
+            local ok, err = wb:close()
+            if not ok then
+                ngx.say("failed to close conn: ", err)
+                return
+            end
+        ';
+    }
+
+    location = /s {
+        content_by_lua '
+            local server = require "resty.websocket.server"
+            local wb, err = server:new()
+            if not wb then
+                ngx.log(ngx.ERR, "failed to new websocket: ", err)
+                return ngx.exit(444)
+            end
+
+            while true do
+                local data, typ, err = wb:recv_frame()
+                if not data then
+                    -- ngx.log(ngx.ERR, "failed to receive a frame: ", err)
+                    return ngx.exit(444)
+                end
+
+                -- send it back!
+                local bytes, err = wb:send_text(data)
+                if not bytes then
+                    ngx.log(ngx.ERR, "failed to send the 2nd text: ", err)
+                    return ngx.exit(444)
+                end
+            end
+        ';
+    }
+--- request
+GET /c
+--- response_body
+received: hello (text)
+
+--- no_error_log
+[error]
+[warn]
+
+
+
+=== TEST 45: get_resp_status_code and headers when error connect
+--- http_config eval: $::HttpConfig
+--- config
+    location = /c {
+        content_by_lua '
+            local client = require "resty.websocket.client"
+            local wb, err = client:new()
+            local uri = "ws://127.0.0.1:" .. ngx.var.server_port .. "/s"
+            -- ngx.say("uri: ", uri)
+            local ok, err = wb:connect(uri)
+            if not ok then
+                local headers = wb:get_resp_headers()
+                local status_code = wb:get_resp_status_code()
+                ngx.say("1: status code: ", status_code)
+                ngx.say("2: retry-after: ", headers.retry_after)
+                return
+            else
+                ngx.say("websocket should fail")
+            end
+        ';
+    }
+
+    location = /s {
+        content_by_lua '
+            ngx.header["retry-after"] = "30"
+            return ngx.exit(ngx.HTTP_TOO_MANY_REQUESTS)
+        ';
+    }
+--- request
+GET /c
+--- response_body
+1: status code: 429
+2: retry-after: 30
+--- no_error_log
+[error]
+[warn]
+
+
+
+=== TEST 46: get_resp_headers and get_resp_status_code return nil if connect failed without response
+--- http_config eval: $::HttpConfig
+--- config
+    location = /c {
+        content_by_lua '
+            local client = require "resty.websocket.client"
+            local wb, err = client:new()
+            local uri = "ws://127.0.0.1:" .. ngx.var.server_port .. "/s"
+            local ok, err = wb:connect(uri)
+            if not ok then
+                local headers, err = wb:get_resp_headers()
+                local status_code = wb:get_resp_status_code()
+                ngx.say("1: status code: ", status_code)
+                ngx.say("2: headers: ", headers)
+                ngx.say("3: error: ", err)
+                return
+            end
+        ';
+    }
+
+    location = /s {
+        content_by_lua '
+            return ngx.exit(ngx.HTTP_CLOSE)
+        ';
+    }
+--- request
+GET /c
+--- response_body
+1: status code: nil
+2: headers: nil
+3: error: response header not available
+--- no_error_log
+[error]
+[warn]

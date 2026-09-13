@@ -49,7 +49,7 @@ __DATA__
 --- request
 GET /t
 --- response_body
-failed to connect: failed websocket handshake: unexpected response status: 403
+failed to connect: unexpected HTTP response code: 403
 --- no_error_log
 [error]
 
@@ -84,7 +84,7 @@ failed to connect: failed websocket handshake: unexpected response status: 403
 --- request
 GET /t
 --- response_body
-failed to connect: failed websocket handshake: unexpected response status: 301
+failed to connect: unexpected HTTP response code: 301
 --- no_error_log
 [error]
 
