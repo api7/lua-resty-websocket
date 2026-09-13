@@ -629,6 +629,12 @@ each request.
 Installation
 ============
 
+This fork is published to LuaRocks as `api7-lua-resty-websocket` (the `lua-resty-websocket` package name is already held by an unrelated LuaRocks account, hence the different name):
+
+```shell
+luarocks install api7-lua-resty-websocket
+```
+
 It is recommended to use the latest [OpenResty bundle](http://openresty.org) directly where this library
 is bundled and enabled by default. At least OpenResty 1.4.2.9 is required. And you need to enable LuaJIT when building your OpenResty
 bundle by passing the `--with-luajit` option to its `./configure` script. No extra Nginx configuration is required.

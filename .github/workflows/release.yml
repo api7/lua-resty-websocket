@@ -1,0 +1,69 @@
+name: Release
+
+on:
+  push:
+    branches:
+      - master
+    paths:
+      - 'rockspec/**'
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    name: Release
+    runs-on: ubuntu-latest
+    # only run for a commit whose message starts with "feat: release vX.Y.Z";
+    # anything else touching rockspec/** (typo fixes, this workflow itself,
+    # etc.) should not show up as a failed run
+    if: "startsWith(github.event.head_commit.message, 'feat: release v')"
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Install Lua
+        uses: leafo/gh-actions-lua@v8
+
+      - name: Install Luarocks
+        uses: leafo/gh-actions-luarocks@v4
+
+      - name: Extract release version
+        id: release_env
+        shell: bash
+        env:
+          # route the commit message through the environment instead of
+          # interpolating it into the script source: it's attacker-controlled
+          # (anyone who can push a commit controls its message) and directly
+          # templating it into `run:` would let shell metacharacters in the
+          # message execute arbitrary commands in this job, which also holds
+          # GITHUB_TOKEN and LUAROCKS_TOKEN
+          TITLE: ${{ github.event.head_commit.message }}
+        run: |
+          # keep the captured version to a safe character set (this is still
+          # attacker-controlled input up to this point) before it's used in
+          # later steps' `run:` blocks
+          re="^feat: release v?([0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z.]+)?)"
+          if [[ "$TITLE" =~ $re ]]; then
+              echo "version=v${BASH_REMATCH[1]}" >> "$GITHUB_OUTPUT"
+              echo "version_without_v=${BASH_REMATCH[1]}" >> "$GITHUB_OUTPUT"
+          else
+              echo "head commit message does not match 'feat: release vX.Y.Z'" >&2
+              exit 1
+          fi
+
+      - name: Create GitHub release
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          VERSION: ${{ steps.release_env.outputs.version }}
+        run: |
+          gh release create "$VERSION" --title "$VERSION" --notes "Release $VERSION"
+
+      - name: Upload to LuaRocks
+        env:
+          LUAROCKS_TOKEN: ${{ secrets.LUAROCKS_TOKEN }}
+          VERSION_WITHOUT_V: ${{ steps.release_env.outputs.version_without_v }}
+        run: |
+          luarocks install dkjson
+          luarocks upload "rockspec/api7-lua-resty-websocket-${VERSION_WITHOUT_V}-0.rockspec" --api-key="$LUAROCKS_TOKEN"
