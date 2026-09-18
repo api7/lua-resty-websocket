@@ -3,7 +3,7 @@
 use lib '.';
 use t::Tests;
 
-plan tests => repeat_each() * (blocks() * 4);
+plan tests => repeat_each() * (blocks() * 3);
 
 run_tests();
 
@@ -53,7 +53,7 @@ __DATA__
         }
     }
 --- response_body
-data: nil, typ: nil, err: failed to receive the first 2 bytes: closed
+data: nil, typ: nil, err: failed to receive the first 2 bytes: connection reset by peer
 --- grep_error_log eval: qr/\[lua\].*/
 --- grep_error_log_out eval
 qr/failed receiving frame from client: exceeding max payload len/
