@@ -106,10 +106,31 @@ function _M.new(opts)
         error("opts.upstream_max_fragments must be a number >= 1", 2)
     end
 
+    if opts.client_new_opts ~= nil and type(opts.client_new_opts) ~= "table" then
+        error("opts.client_new_opts must be a table", 2)
+    end
 
-    -- TODO: provide a means of passing options through to the
-    -- resty.websocket.client constructor (like `max_payload_len`)
-    local client, err = ws_client:new()
+    if opts.upstream_new_opts ~= nil and type(opts.upstream_new_opts) ~= "table" then
+        error("opts.upstream_new_opts must be a table", 2)
+    end
+
+
+    -- as with client_max_frame_size/upstream_max_fragments above, "client"
+    -- and "upstream" name the two roles of this proxy, not the two library
+    -- modules: "client" is the role facing the real, downstream WebSocket
+    -- client, which this proxy serves through a resty.websocket.server
+    -- instance (self.server, created in connect_client() below); "upstream"
+    -- is the role facing the backend, served through a resty.websocket.client
+    -- instance (self.client, created right here). So opts.client_new_opts
+    -- ends up at ws_server:new(), and opts.upstream_new_opts at ws_client:new().
+    --
+    -- Each is passed through as-is to that constructor (same as
+    -- connect_upstream() already does for connect()'s own options), giving
+    -- the caller access to everything it supports: max_payload_len,
+    -- max_recv_len, max_send_len, send_unmasked/send_masked, timeout. Left
+    -- unset, that constructor keeps defaulting max_payload_len (and, through
+    -- it, max_recv_len/max_send_len) to 65535, same as it always has.
+    local client, err = ws_client:new(opts.upstream_new_opts)
     if not client then
         return nil, "failed to create client: " .. err
     end
@@ -124,6 +145,9 @@ function _M.new(opts)
         client_max_fragments = opts.client_max_fragments,
         upstream_max_frame_size = opts.upstream_max_frame_size,
         upstream_max_fragments = opts.upstream_max_fragments,
+        -- passed to ws_server:new() in connect_client(), once the server
+        -- accepting the downstream client's connection is actually created
+        client_new_opts = opts.client_new_opts,
         aggregate_fragments = opts.aggregate_fragments,
         debug = opts.debug,
         client_state = _STATES.INIT,
@@ -475,7 +499,10 @@ function _M:connect_client()
 
     self:dd("completing client handshake")
 
-    local server, err = ws_server:new()
+    -- self.client_new_opts is opts.client_new_opts from _M.new(): the
+    -- "client" role, i.e. the real downstream client, is served through
+    -- this resty.websocket.server instance
+    local server, err = ws_server:new(self.client_new_opts)
     if not server then
         return nil, err
     end
