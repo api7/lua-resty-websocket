@@ -386,6 +386,8 @@ Connects to the remote WebSocket service port and performs the websocket handsha
 
 Before actually resolving the host name and connecting to the remote backend, this method will always look up the connection pool for matched idle connections created by previous calls of this method.
 
+The handshake response is validated per RFC 6455 section 4.1: the status must be `101`, `Upgrade` must be `websocket`, `Connection` must carry the `upgrade` token, `Sec-WebSocket-Accept` must match the key that was sent, any `Sec-WebSocket-Protocol` must be one of the offered subprotocols, and `Sec-WebSocket-Extensions` must be absent since no extension is ever offered. When validation fails the method returns `nil` plus an error message, the underlying socket is closed, and the object is marked fatal.
+
 The third return value of this method contains the raw, plain-text response (status line and headers) to the handshake request. This allows the caller to perform additional validation and/or extract the response headers. When the connection is reused and no handshake request is sent, the string `"connection reused"` is returned in lieu of the response.
 
 An optional Lua table can be specified as the last argument to this method to specify various connect options:
