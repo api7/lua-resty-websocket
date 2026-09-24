@@ -48,6 +48,37 @@ _M._VERSION = '0.13'
 local mt = { __index = _M }
 
 
+-- default cap on the size of a handshake response header block, in bytes;
+-- mirrors nginx's own 8k header buffer
+local DEFAULT_MAX_HEADER_LEN = 8192
+
+
+-- reads the response header block terminated by CRLFCRLF, refusing to buffer
+-- more than max_header_len bytes. max_header_len == 0 means no limit.
+local function recv_header(sock, max_header_len)
+    local reader = sock:receiveuntil("\r\n\r\n")
+
+    if max_header_len == 0 then
+        return reader()
+    end
+
+    -- ask for one byte past the limit: a header block that fits comes back
+    -- whole, while an oversized one (or a peer that never terminates the
+    -- block at all) comes back at the limit instead of being buffered forever
+    local header, err, partial = reader(max_header_len + 1)
+    if not header then
+        return nil, err, partial
+    end
+
+    if #header > max_header_len then
+        return nil, "response headers too large (limit: "
+                    .. max_header_len .. " bytes)"
+    end
+
+    return header
+end
+
+
 function _M.new(self, opts)
     local sock, err = tcp()
     if not sock then
@@ -55,11 +86,18 @@ function _M.new(self, opts)
     end
 
     local max_payload_len, send_unmasked, timeout
-    local max_recv_len, max_send_len
+    local max_recv_len, max_send_len, max_header_len
     if opts then
         max_payload_len = opts.max_payload_len
         max_recv_len = opts.max_recv_len
         max_send_len = opts.max_send_len
+        max_header_len = opts.max_header_len
+
+        if max_header_len ~= nil
+           and (type(max_header_len) ~= "number" or max_header_len < 0)
+        then
+            return nil, "max_header_len must be a non-negative number"
+        end
 
         send_unmasked = opts.send_unmasked
         timeout = opts.timeout
@@ -72,11 +110,13 @@ function _M.new(self, opts)
     max_payload_len = max_payload_len or 65535
     max_recv_len = max_recv_len or max_payload_len
     max_send_len = max_send_len or max_payload_len
+    max_header_len = max_header_len or DEFAULT_MAX_HEADER_LEN
 
     return setmetatable({
         sock = sock,
         max_recv_len = max_recv_len,
         max_send_len = max_send_len,
+        max_header_len = max_header_len,
         send_unmasked = send_unmasked,
     }, mt)
 end
@@ -288,9 +328,7 @@ function _M.connect(self, uri, opts)
                 return nil, "failed to send the handshake request: " .. err
             end
 
-            local header_reader = sock:receiveuntil("\r\n\r\n")
-            -- FIXME: check for too big response headers
-            local header, err, _ = header_reader()
+            local header, err = recv_header(sock, self.max_header_len)
             if not header then
                 return nil, "failed to receive response header: " .. err
             end
@@ -360,9 +398,8 @@ function _M.connect(self, uri, opts)
         return nil, "failed to send the handshake request: " .. err
     end
 
-    local header_reader = sock:receiveuntil("\r\n\r\n")
-    -- FIXME: check for too big response headers
-    local header, err, partial = header_reader()
+    local header
+    header, err = recv_header(sock, self.max_header_len)
     if not header then
         return nil, "failed to receive response header: " .. err
     end
