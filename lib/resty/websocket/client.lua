@@ -75,6 +75,25 @@ local function has_token(value, token)
 end
 
 
+-- adds every comma-separated token of value to set
+local function add_tokens(set, value)
+    local iter, err = re_gmatch(value, [[[^,\s]+]], "jo")
+    if not iter then
+        ngx_log(ngx_DEBUG, "failed to parse header value: ", err)
+        return
+    end
+
+    while true do
+        local m = iter()
+        if not m then
+            return
+        end
+
+        set[m[0]] = true
+    end
+end
+
+
 -- RFC 6455 section 4.1: the client must fail the connection unless the server
 -- proves it understood the handshake. Without these checks anything that
 -- answers 101 passes for a websocket server, and a duplicated header (parsed
@@ -99,10 +118,12 @@ local function verify_handshake(resp_headers, key, protocols)
         return nil, "invalid \"Sec-WebSocket-Accept\" response header"
     end
 
-    -- the server may decline the subprotocol, but it may not invent one
+    -- the server may decline the subprotocol, but it may not invent one.
+    -- RFC 6455 places no case folding on subprotocol names, so they are
+    -- compared verbatim
     local proto = resp_headers.sec_websocket_protocol
     if proto ~= nil
-       and (type(proto) ~= "string" or not protocols[str_lower(proto)])
+       and (type(proto) ~= "string" or not protocols[proto])
     then
         return nil, "invalid \"Sec-WebSocket-Protocol\" response header"
     end
@@ -217,12 +238,13 @@ function _M.connect(self, uri, opts)
                                .. concat(protos, ",")
 
                 for _, proto in ipairs(protos) do
-                    offered_protocols[str_lower(proto)] = true
+                    add_tokens(offered_protocols, proto)
                 end
 
             else
                 proto_header = "\r\nSec-WebSocket-Protocol: " .. protos
-                offered_protocols[str_lower(protos)] = true
+                -- a scalar may still carry a comma-separated list
+                add_tokens(offered_protocols, protos)
             end
         end
 
@@ -631,7 +653,9 @@ function _M.get_resp_headers(self)
         return nil, "response header not available"
     end
 
-    local iter, err = re_gmatch(self.resp_header .. "\r\n", "([^:\\s]+):\\s*(.*?)\r\n", "jo")
+    -- RFC 7230 section 3.2.4: leading and trailing OWS is not part of the
+    -- field value, so strip it instead of handing it to the caller
+    local iter, err = re_gmatch(self.resp_header .. "\r\n", "([^:\\s]+):[ \\t]*(.*?)[ \\t]*\r\n", "jo")
     if err then
         return nil, "failed to parse response header: " .. err
     end

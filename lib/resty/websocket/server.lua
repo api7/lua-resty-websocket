@@ -13,6 +13,7 @@ local req_sock = ngx.req.socket
 local ngx_header = ngx.header
 local req_headers = ngx.req.get_headers
 local str_lower = string.lower
+local str_match = string.match
 local char = string.char
 local str_find = string.find
 local sha1_bin = ngx.sha1_bin
@@ -85,7 +86,13 @@ function _M.new(self, opts)
     end
 
     if protocols then
-        ngx_header["Sec-WebSocket-Protocol"] = protocols
+        -- RFC 6455 section 4.2.2: the server selects exactly one subprotocol
+        -- from the client's list, so answer with the first one offered
+        -- instead of echoing the whole list back
+        local selected = str_match(protocols, "[^,%s]+")
+        if selected then
+            ngx_header["Sec-WebSocket-Protocol"] = selected
+        end
     end
     ngx_header["Upgrade"] = "websocket"
 

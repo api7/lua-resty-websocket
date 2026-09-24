@@ -172,6 +172,8 @@ To load this module, just do this
 
 Performs the websocket handshake process on the server side and returns a WebSocket server object.
 
+When the client offers subprotocols, the first one it lists is selected and returned in the `Sec-WebSocket-Protocol` response header. RFC 6455 section 4.2.2 allows exactly one, so the offered list is never echoed back whole.
+
 In case of error, it returns `nil` and a string describing the error.
 
 An optional options table can be specified. The following options are as follows:
@@ -394,7 +396,7 @@ An optional Lua table can be specified as the last argument to this method to sp
 
 * `protocols`
 
-    Specifies all the subprotocols used for the current WebSocket session. It could be a Lua table holding all the subprotocol names or just a single Lua string.
+    Specifies all the subprotocols used for the current WebSocket session. It could be a Lua table holding all the subprotocol names or just a single Lua string, which may itself be a comma-separated list. The subprotocol the server selects must be one of these, compared verbatim.
 * `origin`
 
     Specifies the value of the `Origin` request header.

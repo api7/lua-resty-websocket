@@ -390,3 +390,152 @@ GET /t
 received: hello [text] (text)
 --- no_error_log
 [error]
+
+
+
+=== TEST 11: trailing whitespace in the response headers is tolerated
+--- http_config eval: $::HttpConfig
+--- config
+    location = /t {
+        content_by_lua_block {
+            local client = require "resty.websocket.client"
+            local wb = client:new()
+
+            local ok, err = wb:connect("ws://127.0.0.1:7986/",
+                                       { key = "dGhlIHNhbXBsZSBub25jZQ==" })
+            if not ok then
+                ngx.say("failed to connect: ", err)
+                return
+            end
+
+            ngx.say("connected")
+        }
+    }
+--- request
+GET /t
+--- tcp_listen: 7986
+--- tcp_reply eval
+"HTTP/1.1 101 Switching Protocols\r
+Upgrade: websocket \r
+Connection: Upgrade\r
+Sec-WebSocket-Accept: s3pPLMBiTxaQ9kYGzzhZRbK+xOo=  \r
+\r
+"
+--- response_body
+connected
+--- no_error_log
+[error]
+
+
+
+=== TEST 12: a subprotocol differing only in case is rejected
+--- http_config eval: $::HttpConfig
+--- config
+    location = /t {
+        content_by_lua_block {
+            local client = require "resty.websocket.client"
+            local wb = client:new()
+
+            local ok, err = wb:connect("ws://127.0.0.1:7986/",
+                                       { key = "dGhlIHNhbXBsZSBub25jZQ==",
+                                         protocols = { "json" } })
+            if not ok then
+                ngx.say("failed to connect: ", err)
+                return
+            end
+
+            ngx.say("connected")
+        }
+    }
+--- request
+GET /t
+--- tcp_listen: 7986
+--- tcp_reply eval
+"HTTP/1.1 101 Switching Protocols\r
+Upgrade: websocket\r
+Connection: Upgrade\r
+Sec-WebSocket-Accept: s3pPLMBiTxaQ9kYGzzhZRbK+xOo=\r
+Sec-WebSocket-Protocol: JSON\r
+\r
+"
+--- response_body
+failed to connect: failed websocket handshake: invalid "Sec-WebSocket-Protocol" response header
+--- no_error_log
+[error]
+
+
+
+=== TEST 13: a subprotocol list passed as a single string is honoured
+--- http_config eval: $::HttpConfig
+--- config
+    location = /t {
+        content_by_lua_block {
+            local client = require "resty.websocket.client"
+            local wb = client:new()
+
+            local ok, err = wb:connect("ws://127.0.0.1:7986/",
+                                       { key = "dGhlIHNhbXBsZSBub25jZQ==",
+                                         protocols = "xml, json" })
+            if not ok then
+                ngx.say("failed to connect: ", err)
+                return
+            end
+
+            ngx.say("connected")
+        }
+    }
+--- request
+GET /t
+--- tcp_listen: 7986
+--- tcp_reply eval
+"HTTP/1.1 101 Switching Protocols\r
+Upgrade: websocket\r
+Connection: Upgrade\r
+Sec-WebSocket-Accept: s3pPLMBiTxaQ9kYGzzhZRbK+xOo=\r
+Sec-WebSocket-Protocol: json\r
+\r
+"
+--- response_body
+connected
+--- no_error_log
+[error]
+
+
+
+=== TEST 14: the server selects one of several offered subprotocols
+--- http_config eval: $::HttpConfig
+--- config
+    location = /ws {
+        content_by_lua_block {
+            local server = require "resty.websocket.server"
+            local wb, err = server:new()
+            if not wb then
+                ngx.log(ngx.ERR, "failed to new websocket: ", err)
+                return ngx.exit(444)
+            end
+            wb:recv_frame()
+        }
+    }
+
+    location = /t {
+        content_by_lua_block {
+            local client = require "resty.websocket.client"
+            local wb = client:new()
+
+            local uri = "ws://127.0.0.1:" .. ngx.var.server_port .. "/ws"
+            local ok, err = wb:connect(uri, { protocols = { "xml", "json" } })
+            if not ok then
+                ngx.say("failed to connect: ", err)
+                return
+            end
+
+            ngx.say("selected: ", wb:get_resp_headers().sec_websocket_protocol)
+            wb:close()
+        }
+    }
+--- request
+GET /t
+--- response_body
+selected: xml
+--- no_error_log
+[error]
