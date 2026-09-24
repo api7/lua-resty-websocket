@@ -172,6 +172,8 @@ To load this module, just do this
 
 Performs the websocket handshake process on the server side and returns a WebSocket server object.
 
+When the client offers subprotocols, the first one it lists is selected and returned in the `Sec-WebSocket-Protocol` response header. RFC 6455 section 4.2.2 allows exactly one, so the offered list is never echoed back whole.
+
 In case of error, it returns `nil` and a string describing the error.
 
 An optional options table can be specified. The following options are as follows:
@@ -389,13 +391,15 @@ Connects to the remote WebSocket service port and performs the websocket handsha
 
 Before actually resolving the host name and connecting to the remote backend, this method will always look up the connection pool for matched idle connections created by previous calls of this method.
 
+The handshake response is validated per RFC 6455 section 4.1: the status must be `101`, `Upgrade` must be `websocket`, `Connection` must carry the `upgrade` token, `Sec-WebSocket-Accept` must match the key that was sent, any `Sec-WebSocket-Protocol` must be one of the offered subprotocols, and `Sec-WebSocket-Extensions` must be absent since no extension is ever offered. When validation fails the method returns `nil` plus an error message, the underlying socket is closed, and the object is marked fatal.
+
 The third return value of this method contains the raw, plain-text response (status line and headers) to the handshake request. This allows the caller to perform additional validation and/or extract the response headers. When the connection is reused and no handshake request is sent, the string `"connection reused"` is returned in lieu of the response.
 
 An optional Lua table can be specified as the last argument to this method to specify various connect options:
 
 * `protocols`
 
-    Specifies all the subprotocols used for the current WebSocket session. It could be a Lua table holding all the subprotocol names or just a single Lua string.
+    Specifies all the subprotocols used for the current WebSocket session. It could be a Lua table holding all the subprotocol names or just a single Lua string, which may itself be a comma-separated list. The subprotocol the server selects must be one of these, compared verbatim.
 * `origin`
 
     Specifies the value of the `Origin` request header.

@@ -17,15 +17,18 @@ local re_match = ngx.re.match
 local re_find  = ngx.re.find
 local re_gmatch = ngx.re.gmatch
 local encode_base64 = ngx.encode_base64
+local sha1_bin = ngx.sha1_bin
 local concat = table.concat
 local insert = table.insert
 local char = string.char
 local str_find = string.find
+local str_lower = string.lower
 local str_sub = string.sub
 local rand = math.random
 local rshift = bit.rshift
 local band = bit.band
 local setmetatable = setmetatable
+local ipairs = ipairs
 local type = type
 local debug = ngx.config.debug
 local ngx_log = ngx.log
@@ -76,6 +79,92 @@ local function recv_header(sock, max_header_len)
     end
 
     return header
+end
+
+
+local WS_GUID = "258EAFA5-E914-47DA-95CA-C5AB0DC85B11"
+
+
+-- true if a comma-separated header value carries the given token
+local function has_token(value, token)
+    local iter, err = re_gmatch(value, [[[^,\s]+]], "jo")
+    if not iter then
+        ngx_log(ngx_DEBUG, "failed to parse header value: ", err)
+        return false
+    end
+
+    while true do
+        local m = iter()
+        if not m then
+            return false
+        end
+
+        if str_lower(m[0]) == token then
+            return true
+        end
+    end
+end
+
+
+-- adds every comma-separated token of value to set
+local function add_tokens(set, value)
+    local iter, err = re_gmatch(value, [[[^,\s]+]], "jo")
+    if not iter then
+        ngx_log(ngx_DEBUG, "failed to parse header value: ", err)
+        return
+    end
+
+    while true do
+        local m = iter()
+        if not m then
+            return
+        end
+
+        set[m[0]] = true
+    end
+end
+
+
+-- RFC 6455 section 4.1: the client must fail the connection unless the server
+-- proves it understood the handshake. Without these checks anything that
+-- answers 101 passes for a websocket server, and a duplicated header (parsed
+-- into a table) is a protocol error in its own right.
+local function verify_handshake(resp_headers, key, protocols)
+    local upgrade = resp_headers.upgrade
+    if type(upgrade) ~= "string" or str_lower(upgrade) ~= "websocket" then
+        return nil, "invalid \"Upgrade\" response header"
+    end
+
+    local connection = resp_headers.connection
+    if type(connection) ~= "string" or not has_token(connection, "upgrade") then
+        return nil, "invalid \"Connection\" response header"
+    end
+
+    local accept = resp_headers.sec_websocket_accept
+    if type(accept) ~= "string" then
+        return nil, "missing \"Sec-WebSocket-Accept\" response header"
+    end
+
+    if accept ~= encode_base64(sha1_bin(key .. WS_GUID)) then
+        return nil, "invalid \"Sec-WebSocket-Accept\" response header"
+    end
+
+    -- the server may decline the subprotocol, but it may not invent one.
+    -- RFC 6455 places no case folding on subprotocol names, so they are
+    -- compared verbatim
+    local proto = resp_headers.sec_websocket_protocol
+    if proto ~= nil
+       and (type(proto) ~= "string" or not protocols[proto])
+    then
+        return nil, "invalid \"Sec-WebSocket-Protocol\" response header"
+    end
+
+    -- no extension is ever offered, so none may be accepted
+    if resp_headers.sec_websocket_extensions ~= nil then
+        return nil, "unexpected \"Sec-WebSocket-Extensions\" response header"
+    end
+
+    return true
 end
 
 
@@ -175,6 +264,7 @@ function _M.connect(self, uri, opts)
     end
 
     local ssl_verify, server_name, headers, proto_header, origin_header
+    local offered_protocols = {}
     local sock_opts = {}
     local client_cert, client_priv_key
     local header_host
@@ -187,8 +277,14 @@ function _M.connect(self, uri, opts)
                 proto_header = "\r\nSec-WebSocket-Protocol: "
                                .. concat(protos, ",")
 
+                for _, proto in ipairs(protos) do
+                    add_tokens(offered_protocols, proto)
+                end
+
             else
                 proto_header = "\r\nSec-WebSocket-Protocol: " .. protos
+                -- a scalar may still carry a comma-separated list
+                add_tokens(offered_protocols, protos)
             end
         end
 
@@ -406,8 +502,6 @@ function _M.connect(self, uri, opts)
 
     -- error("header: " .. header)
 
-    -- FIXME: verify the response headers
-
     m, err = re_match(header, [[^\s*HTTP/1\.1\s+(\d+)]], "jo")
     if not m then
         return nil, "bad HTTP response status line: " .. header
@@ -430,6 +524,26 @@ function _M.connect(self, uri, opts)
         end
         self.fatal = true
         return nil, "unexpected HTTP response code: " .. m[1], header
+    end
+
+    local resp_headers
+    resp_headers, err = self:get_resp_headers()
+    if not resp_headers then
+        err = "failed to parse response headers: " .. err
+
+    else
+        ok, err = verify_handshake(resp_headers, key, offered_protocols)
+    end
+
+    if err then
+        local closing_ok, closing_err = sock:close()
+        if not closing_ok then
+            ngx_log(ngx_DEBUG, "failed to close the underlying socket: ",
+                closing_err, " when handling a failed handshake")
+        end
+
+        self.fatal = true
+        return nil, "failed websocket handshake: " .. err, header
     end
 
     return 1, nil, header
@@ -576,7 +690,9 @@ function _M.get_resp_headers(self)
         return nil, "response header not available"
     end
 
-    local iter, err = re_gmatch(self.resp_header .. "\r\n", "([^:\\s]+):\\s*(.*?)\r\n", "jo")
+    -- RFC 7230 section 3.2.4: leading and trailing OWS is not part of the
+    -- field value, so strip it instead of handing it to the caller
+    local iter, err = re_gmatch(self.resp_header .. "\r\n", "([^:\\s]+):[ \\t]*(.*?)[ \\t]*\r\n", "jo")
     if err then
         return nil, "failed to parse response header: " .. err
     end
