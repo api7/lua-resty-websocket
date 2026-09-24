@@ -366,6 +366,9 @@ An optional options table can be specified. The following options are as follows
 * `max_send_len`
 
     Specifies the maximal length of payload allowed when sending WebSocket frames. Defaults to the value of `max_payload_len`.
+* `max_header_len`
+
+    Specifies the maximal size, in bytes, of the response header block read during the handshake. A server that sends more than this, or that never terminates the header block at all, is refused instead of being buffered. Defaults to `8192`. Set it to `0` to read without a limit.
 * `send_unmasked`
 
     Specifies whether to send out an unmasked WebSocket frames. When it is `true`, unmasked frames are always sent. Default to `false`. RFC 6455 requires, however, that the client MUST send masked frames to the server, so never set this option to `true` unless you know what you are doing.
